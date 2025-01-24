@@ -62,29 +62,50 @@ app.post('/api/users', async (req, res) => {
   }
 
 })
+
+app.get('/api/users', async (req, res) => {
+  try {
+    await client.connect();
+    const db = client.db('exercise_tracker');
+    const users = await db.collection("users").find({}).toArray();
+    const mapped = users.map((a) => {
+      return {
+        username: a.userName,
+        _id: a._id.toString()
+      }
+    })
+    res.json(mapped)
+  } catch (err) {
+    console.log(err);
+  } finally {
+    await client.close
+  }
+});
+
 app.post('/api/users/:_id/exercises', async (req, res) => {
   const body = req.body;
-  if(body.description === "" || body.duration === "" || body.date === "") {
+  if(body.description === "" || body.duration === "") {
     res.json({ message: "Fill out all exercise fields to add to log"});
   } else {
     try {
       await client.connect();
-      
-      const id = new ObjectId(body[':_id'])
+      const id = new ObjectId(req.params._id)
       const db = client.db("exercise_tracker");
       const user = await db.collection('users').findOne({_id: id});
       if(!user){
         res.json({ message: "invalid id try again"})
+      } else {
+        const exercise = {
+          userId: req.params._id,
+          username: user.userName,
+          description: body.description,
+          duration: parseInt(body.duration),
+          date: body.date ? body.date : new  Date(Date.now()).toDateString()
+        }
+        await db.collection("exercises").insertOne(exercise);
+        res.json({...exercise, _id: req.params._id});
       }
-      const exercise = {
-        userId: body[':_id'],
-        userName: user.userName,
-        description: body.description,
-        duration: parseInt(body.duration),
-        date: body.date
-      }
-      await db.collection("exercises").insertOne(exercise)
-      res.json({ user: user.username, exercise: exercise});
+      
     } catch (err) {
       console.log(err);
       res.json({ err: err});
@@ -97,43 +118,45 @@ app.post('/api/users/:_id/exercises', async (req, res) => {
 })
 
 app.get('/api/users/:_id/logs', async (req, res) => {
-  console.log(req.query, req.params._id);
+  
   const id = req.params._id.toString();
   const from = req.query.from || new Date(0).toISOString().substring(0, 10);
-  const until = req.query.to || new Date(Date.now()).toISOString().substring(0, 10);
+  const until = req.query.to || new Date(Date.now() + 86400000).toISOString().substring(0, 10);
   const limit = Number(req.query.limit) || 0;
-
+  console.log(req.query, " ", from, " ", until, " ", limit)
   try {
     await client.connect();
     const db = client.db("exercise_tracker");
-    
     const exercises = await db.collection("exercises").find({
       userId: id,
-      date: { $gte: from, $lte: until },
+      date: { $gte: from },
     })
     .limit(limit)
     .toArray();
-    if(exercises.length < 1){
-      res.json({message: "No exercises for user on those dates"})
-    } else {
-      const mapped = exercises.map((a) => {
+    const user = await db.collection("users").findOne({_id: new ObjectId(id)});
+    const name = user.userName;
+    let mapped = [];
+    if(exercises.length > 0) {
+      mapped = exercises.map((a) => {
         return {
           description: a.description,
           duration: a.duration,
-          date: a.date
+          date: new Date(a.date).toDateString()
         }
       })
-      const name = exercises[0].userName
-      console.log("Get", mapped);
-      res.json({
-        _id: id,
-        username: name,
-        count: mapped.length,
-        log: mapped,
-      });
     }
     
+    console.log("name: ", name, " count: ", mapped.length, " _id: ", id, " log: ", mapped)
+    res.json({
+      username: name,
+      count: mapped.length,
+      _id: id,
+      
+      log: mapped,
+    });
+    
   } catch (err) {
+    console.log(err);
     res.json({ err: err});
   } finally {
     // Ensures that the client will close when you finish/error
